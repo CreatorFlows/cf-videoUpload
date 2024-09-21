@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+option go_package = "github.com/creatorflows/cf-videoUpload";
+
+message VideoUploadRequest {
+    string file_name = 1;
+    bytes chunk = 2;
+}
+
+message VideoUploadResponse {
+    string file_name = 1;
+    uint32 size = 2;
+    string status = 3; // e.g., "success" or "failure"
+}
+
+service VideoUploadService {
+    rpc Upload(stream VideoUploadRequest) returns (VideoUploadResponse);
+}
