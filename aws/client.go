@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-var AWS_CONFIG struct {
+type AWS_CONFIG struct {
 	ACCESS_KEY string
 	SECRET_KEY string
 	REGION     string
@@ -23,14 +23,17 @@ var (
 	once          sync.Once
 )
 
-func AWSClient() error {
+func AWSClient(cfg AWS_CONFIG) error {
 	var err error
 	once.Do(func() {
-		// Load AWS configuration
 		AWS_CONFIG_V2, err = config.LoadDefaultConfig(context.TODO(),
-			config.WithRegion(AWS_CONFIG.REGION),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-				AWS_CONFIG.ACCESS_KEY, AWS_CONFIG.SECRET_KEY, "")),
+			config.WithRegion(cfg.REGION),
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider(
+					cfg.ACCESS_KEY,
+					cfg.SECRET_KEY,
+					"",
+				)),
 		)
 		if err != nil {
 			err = errors.New("unable to load AWS SDK config")
@@ -41,12 +44,9 @@ func AWSClient() error {
 }
 
 func S3Client() error {
-	var err error
-	once.Do(func() {
-		S3_CLIENT = s3.NewFromConfig(AWS_CONFIG_V2)
-	})
+	S3_CLIENT = s3.NewFromConfig(AWS_CONFIG_V2)
 	if S3_CLIENT == nil {
-		err = errors.New("S3 Client not initialized")
+		return errors.New("S3 Client not initialized")
 	}
-	return err
+	return nil
 }

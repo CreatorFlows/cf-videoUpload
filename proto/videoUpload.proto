@@ -10,7 +10,8 @@ message VideoUploadRequest {
 message VideoUploadResponse {
     string file_name = 1;
     uint32 size = 2;
-    string status = 3; // e.g., "success" or "failure"
+    string status = 3;
+    string url = 4;
 }
 
 service VideoUploadService {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -28,6 +29,24 @@ func init() {
 		log.Fatalf("error loading env: %v", err)
 		os.Exit(1)
 	}
+	logger.InitLogger()
+
+	if err := awsClient.AWSClient(awsClient.AWS_CONFIG{
+		ACCESS_KEY: os.Getenv("ACCESS_KEY"),
+		SECRET_KEY: os.Getenv("SECRET_KEY"),
+		REGION:     os.Getenv("REGION"),
+	}); err != nil {
+		logger.Logger.Error("error in initiating aws client", zap.Error(err))
+		os.Exit(1)
+	}
+	if err := awsClient.S3Client(); err != nil {
+		logger.Logger.Error("error in initiating S3 client", zap.Error(err))
+		os.Exit(1)
+	}
+	logger.Logger.Info("aws config initialized", zap.Any("AWS_CONFIG", map[string]string{
+		"ACCESS_KEY": os.Getenv("ACCESS_KEY"),
+		"SECRET_KEY": os.Getenv("SECRET_KEY"),
+	}))
 }
 
 type server struct {
@@ -41,7 +60,7 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 
 	firstReq, err := stream.Recv()
 	if err != nil {
-		return fmt.Errorf("error receiving initial request: %v", err)
+		return errors.New("error receiving initial request")
 	}
 
 	objectKey := firstReq.FileName
@@ -52,11 +71,11 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 		ContentType: aws.String("video/mp4"),
 	})
 	if err != nil {
-		return fmt.Errorf("unable to create multipart upload: %v", err)
+		return errors.New("unable to create multipart upload")
 	}
 
 	uploadID := createResp.UploadId
-	fmt.Println("Upload ID:", *uploadID)
+	logger.Logger.Info("UploadID", zap.String("UploadID", *uploadID))
 
 	var parts []types.CompletedPart
 	partNumber := int32(1)
@@ -64,14 +83,17 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
+			logger.Logger.Info("end of the file")
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("error receiving chunk: %v", err)
+			logger.Logger.Warn("error in receiving chunks", zap.Error(err))
+			return errors.New("error receiving chunk")
 		}
 
 		if len(req.Chunk) > int(maxChunkSize) {
-			return fmt.Errorf("chunk size exceeds maximum allowed size of %d bytes", maxChunkSize)
+			logger.Logger.Warn("chunk size exceeded", zap.Error(errors.New("exceeds maximum allowed size of bytes")))
+			return errors.New("chunk size exceeds maximum allowed size of bytes")
 		}
 
 		uploadResp, err := svc.UploadPart(context.TODO(), &s3.UploadPartInput{
@@ -88,9 +110,11 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 				UploadId: uploadID,
 			})
 			if abortErr != nil {
-				return fmt.Errorf("unable to abort multipart upload: %v", abortErr)
+				logger.Logger.Warn("unable to abort multipart", zap.Error(abortErr))
+				return errors.New("unable to abort multipart upload")
 			}
-			return fmt.Errorf("unable to upload part %d: %v", partNumber, err)
+			logger.Logger.Warn("unable to upload part", zap.Error(err))
+			return errors.New("unable to upload part")
 		}
 
 		parts = append(parts, types.CompletedPart{
@@ -98,7 +122,7 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 			PartNumber: aws.Int32(partNumber),
 		})
 
-		fmt.Printf("Uploaded part %d\n", partNumber)
+		logger.Logger.Info("part uploaded", zap.String("partNumber:", string(partNumber)))
 		partNumber++
 	}
 
@@ -117,19 +141,22 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 			UploadId: uploadID,
 		})
 		if abortErr != nil {
-			return fmt.Errorf("unable to abort multipart upload: %v", abortErr)
+			logger.Logger.Warn("unable to abort multipart upload", zap.Error(abortErr))
+			return errors.New("unable to abort multipart upload")
 		}
-		return fmt.Errorf("unable to complete multipart upload: %v", err)
+		logger.Logger.Warn("unable to complete multipart upload", zap.Error(abortErr))
+		return errors.New("unable to complete multipart upload")
 	}
+	fileURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, os.Getenv("REGION"), objectKey)
 
-	fmt.Println("Successfully uploaded file")
-	return stream.SendAndClose(&proto.VideoUploadResponse{Status: "success"})
+	logger.Logger.Info("Successfully uploaded file")
+	return stream.SendAndClose(&proto.VideoUploadResponse{Status: "success", Url: fileURL})
 }
 
 func main() {
 	lis, err := net.Listen("tcp", os.Getenv("APP_PORT"))
 	if err != nil {
-		logger.Logger.Warn("error to listen:", zap.Error(err))
+		logger.Logger.Error("error to listen:", zap.Error(err))
 		return
 	}
 
@@ -153,7 +180,7 @@ func main() {
 // 		Key:    aws.String(objectKey),
 // 	}, s3.WithPresignExpires(4*time.Hour))
 // 	if err != nil {
-// 		return "", fmt.Errorf("failed to create presigned URL: %v", err)
+// 		return "", errors.New("failed to create presigned URL: %v", err)
 // 	}
 
 // 	return req.URL, nil
