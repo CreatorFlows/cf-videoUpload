@@ -71,7 +71,7 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 		ContentType: aws.String("video/mp4"),
 	})
 	if err != nil {
-		return errors.New("unable to create multipart upload")
+		return err
 	}
 
 	uploadID := createResp.UploadId
@@ -116,6 +116,7 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 			logger.Logger.Warn("unable to upload part", zap.Error(err))
 			return errors.New("unable to upload part")
 		}
+		logger.Logger.Info("uploading part", zap.Int32("part_number", partNumber), zap.String("etag", *uploadResp.ETag))
 
 		parts = append(parts, types.CompletedPart{
 			ETag:       uploadResp.ETag,
@@ -150,7 +151,7 @@ func (s *server) Upload(stream proto.VideoUploadService_UploadServer) error {
 	fileURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, os.Getenv("REGION"), objectKey)
 
 	logger.Logger.Info("Successfully uploaded file")
-	return stream.SendAndClose(&proto.VideoUploadResponse{Status: "success", Url: fileURL})
+	return stream.SendAndClose(&proto.VideoUploadResponse{Status: "success", Url: fileURL, FileName: objectKey})
 }
 
 func main() {
@@ -159,8 +160,9 @@ func main() {
 		logger.Logger.Error("error to listen:", zap.Error(err))
 		return
 	}
+	logger.Logger.Info("TCP started", zap.String("PORT", os.Getenv("APP_PORT")))
 
-	s := grpc.NewServer(grpc.MaxRecvMsgSize(10 * 1024 * 1024 * 1024)) // 10GB max message size
+	s := grpc.NewServer(grpc.MaxRecvMsgSize(10 * 1024 * 1024 * 1024))
 	proto.RegisterVideoUploadServiceServer(s, &server{})
 
 	reflection.Register(s)
